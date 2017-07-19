@@ -1,0 +1,15 @@
+version: '3'
+services:
+  itk-src:
+    image: "itk-src"
+    volumes:
+      - itk-src:/home/itk/usr/ITK
+    command: "/tmp/cmd.sh"
+  itk-data:
+    image: "itk-data"
+    volumes:
+      - itk-data:/home/itk/data
+      
+volumes:
+  itk-src:
+  itk-data:
