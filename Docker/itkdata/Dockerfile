@@ -1,0 +1,115 @@
+FROM debian:stretch as itkdata
+MAINTAINER Francois Budin <francois.budin@kitware.com>
+
+RUN apt-get update && apt-get install -y \
+  apt-utils \
+  bison \
+  build-essential \
+  curl \
+  git \
+  libpython2.7 \
+  ninja-build \
+  python \
+  python-dev \
+  vim \
+  wget \
+  && apt-get clean
+
+# Install the latest CMake release
+WORKDIR /tmp/
+#RUN curl  -L https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
+    #python get-pip.py && \
+    #pip install cmake
+# Build and install CMake from source for Ninja build job patch to be released with CMake 3.11
+# Commit 07185055d57f28347a1850a1f06787ac93f20afd
+WORKDIR /usr/src
+RUN apt-get install -y libncurses-dev libssl-dev && \
+  git clone https://github.com/Kitware/CMake.git CMake && \
+  cd CMake && \
+  git checkout e841ae823edc3021aaa5b297be715344a9bca47e && \
+  mkdir /usr/src/CMake-build && \
+  cd /usr/src/CMake-build && \
+  /usr/src/CMake/bootstrap \
+    --parallel=5 \
+    --prefix=/usr && \
+  make -j5 && \
+  ./bin/cmake \
+    -DCMAKE_BUILD_TYPE:STRING=Release \
+    -DCMAKE_USE_OPENSSL:BOOL=ON . && \
+  make install && \
+  cd .. && \
+  rm -rf CMake* && \
+  apt-get clean
+
+USER 1000:1000
+
+RUN mkdir /tmp/work
+WORKDIR /tmp/work
+ENV ITKData_VERSION d92873e33e8a54e933e445b92151191f02feab42
+RUN git clone https://github.com/InsightSoftwareConsortium/ITK.git \
+  && cd ITK \
+  && git checkout ${ITKData_VERSION}
+RUN mkdir /tmp/work/ITK-build
+
+RUN mkdir /tmp/data-internal
+ENV ExternalData_OBJECT_STORES /tmp/data-internal
+
+ENV ITK_MAJOR_PREVIOUS_VERSION 4
+ENV ITK_MINOR_PREVIOUS_VERSION 12
+ENV ITK_PATCH_PREVIOUS_VERSION 2
+ENV ITK_FULL_PREVIOUS_VERSION ${ITK_MAJOR_PREVIOUS_VERSION}.${ITK_MINOR_PREVIOUS_VERSION}.${ITK_PATCH_PREVIOUS_VERSION}
+ENV ITK_SHORT_PREVIOUS_VERSION ${ITK_MAJOR_PREVIOUS_VERSION}.${ITK_MINOR_PREVIOUS_VERSION}
+
+RUN cd ${ExternalData_OBJECT_STORES} && \
+  wget -O InsightData-${ITK_FULL_PREVIOUS_VERSION}.tar.gz https://sourceforge.net/projects/itk/files/itk/${ITK_SHORT_PREVIOUS_VERSION}/InsightData-${ITK_FULL_PREVIOUS_VERSION}.tar.gz/download && \
+  tar -xvzf InsightData-${ITK_FULL_PREVIOUS_VERSION}.tar.gz && \
+  rm InsightData-${ITK_FULL_PREVIOUS_VERSION}.tar.gz && \
+  mv InsightToolkit-${ITK_FULL_PREVIOUS_VERSION}/.ExternalData/* . && rm -r InsightToolkit-${ITK_FULL_PREVIOUS_VERSION}
+
+WORKDIR /tmp/work/ITK-build
+RUN cmake -GNinja \
+  -DITK_WRAP_PYTHON:BOOL=TRUE \
+  -DITK_LEGACY_SILENT:BOOL=ON \
+  -DBUILD_TESTING:BOOL=ON \
+  -DBUILD_EXAMPLES:BOOL=ON \
+  -DModule_AnalyzeObjectMapIO:BOOL=ON \
+  -DModule_AnisotropicDiffusionLBR:BOOL=ON \
+  -DModule_BridgeNumPy:BOOL=ON \
+  -DModule_Cuberille:BOOL=ON \
+  -DModule_DVMeshNoise:BOOL=ON \
+  -DModule_FixedPointInverseDisplacementField:BOOL=ON \
+  -DModule_GenericLabelInterpolator:BOOL=ON \
+  -DModule_HigherOrderAccurateGradient:BOOL=ON \
+  -DModule_ITKDCMTK:BOOL=ON \
+  -DModule_ITKIOPhilipsREC:BOOL=ON \
+  -DModule_ITKIOTransformMINC:BOOL=ON \
+  -DModule_ITKLevelSetsv4Visualiza:BOOL=ON \
+#  -DModule_IsotropicWavelets:BOOL=ON \ # checkershadow_Lch_512x512.tiff.md5 
+#  -DModule_LabelErodeDilate:BOOL=ON \ #CmdLineInterface_8h__incl -> Could not find data object in store!
+# -DModule_LesionSizingToolkit:BOOL=ON \# ITKVtkGlue
+  -DModule_MGHIO:BOOL=ON \
+  -DModule_MinimalPathExtraction:BOOL=ON \
+#  -DModule_MorphologicalContourInterpolation:BOOL=ON \ #105769fixed.nii.md5 -> Could not find data object in store!
+  -DModule_MultipleImageIterator:BOOL=ON \
+  -DModule_PrincipalComponentsAnalysis:BOOL=ON \
+  -DModule_RLEImage:BOOL=ON \
+  -DModule_SCIFIO:BOOL=ON \
+  -DModule_SimpleITKFilters:BOOL=ON \
+  -DModule_SkullStrip:BOOL=ON \
+  -DModule_SmoothingRecursiveYvvGaussianFilter:BOOL=ON \
+#  -DModule_SphinxExamples:BOOL=ON \ # itk_eg_logo_latex.eps.md5
+  -DModule_SplitComponents:BOOL=ON \
+  -DModule_Strain:BOOL=ON \
+  -DModule_SubdivisionQuadEdgeMeshFilter:BOOL=ON \
+  -DModule_TextureFeatures:BOOL=ON \
+#  -DModule_TwoProjectionRegistration:BOOL=ON \ # TwoProjectionRegistration -> /BoxheadDRRFullDev1_G90_Reg-Author.tif.md5
+#  -DModule_VariationalRegistration:BOOL=ON \ # VariationalRegistrationElastic2DTest.tif -> Could not find data object in store!
+#  -DModule_WikiExamples:BOOL=ON \ # ITKVtkGlue
+  ../ITK && \
+  ninja ITKData
+
+WORKDIR /tmp/work/ITK
+RUN ./Utilities/Maintenance/ContentLinkSynchronization.sh ${ExternalData_OBJECT_STORES}
+
+COPY cmd.sh /tmp/cmd.sh
+CMD /tmp/cmd.sh
